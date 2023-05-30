@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/rs/cors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -24,9 +25,14 @@ func main() {
 	router := mux.NewRouter()
 	router.HandleFunc("/{score}", homeHandler).Methods("GET")
 
+	c := cors.New(cors.Options{
+		AllowedOrigins:   []string{"http://192.168.50.244:4200"},
+		AllowCredentials: true,
+	})
+
 	server := http.Server{
-		Handler:     router,
-		Addr:        ":8080",
+		Handler:     c.Handler(router),
+		Addr:        ":9090",
 		ReadTimeout: time.Minute,
 	}
 	err := server.ListenAndServe()
