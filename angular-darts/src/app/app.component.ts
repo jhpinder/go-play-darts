@@ -12,12 +12,18 @@ export class AppComponent {
   title = 'angular-darts';
 
   playerScores = {
-    playerOne: 301,
-    playerTwo: 301
+    Scores: [301, 301]
   }
 
   throwDart(score: number) {
     this.backendService.throwDart(score).subscribe(response => {
+      this.playerScores = response;
+      console.log(response.Scores)
+    });
+  }
+
+  newGame() {
+    this.backendService.newGame().subscribe(response => {
       this.playerScores = response;
     });
   }
