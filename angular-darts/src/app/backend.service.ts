@@ -10,7 +10,7 @@ export class BackendService {
   constructor(private http: HttpClient) { }
 
   throwDart(score: number) {
-    const url = "localhost:8080/" + score;
+    const url = "http://192.168.50.244:9090/" + score;
     return this.http.get<ScoreboardResponse>(url);
   }
 }
