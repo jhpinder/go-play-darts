@@ -94,7 +94,6 @@ func initializeGame() {
 	for i := range scores {
 		scores[i] = startingScore
 	}
-
 }
 
 func restartGame(w http.ResponseWriter, _ *http.Request) {
