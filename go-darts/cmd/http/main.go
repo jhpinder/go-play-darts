@@ -36,6 +36,7 @@ func main() {
 	initializeGame()
 	log.Info("Logging some darts info")
 	router := mux.NewRouter()
+	router.HandleFunc("/", gameStatus).Methods("GET")
 	router.HandleFunc("/restart", restartGame).Methods("GET")
 	router.HandleFunc("/{score}", scoreTurn).Methods("GET")
 
@@ -99,6 +100,21 @@ func initializeGame() {
 func restartGame(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	initializeGame()
+	jsonOut, err := json.Marshal(playerScores{
+		Scores: scores,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	_, err = fmt.Fprintln(w, string(jsonOut))
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func gameStatus(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusOK)
 	jsonOut, err := json.Marshal(playerScores{
 		Scores: scores,
 	})
