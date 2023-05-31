@@ -18,4 +18,9 @@ export class BackendService {
     const url = "http://192.168.50.244:9090/restart";
     return this.http.get<ScoreboardResponse>(url);
   }
+
+  currentGameState() {
+    const url = "http://192.168.50.244:9090";
+    return this.http.get<ScoreboardResponse>(url);
+  }
 }

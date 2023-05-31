@@ -1,5 +1,6 @@
 import { Component } from '@angular/core';
 import { BackendService } from './backend.service';
+import { ScoreboardResponse } from './scoreboard-response.Model';
 
 @Component({
   selector: 'app-root',
@@ -11,14 +12,21 @@ export class AppComponent {
   constructor(private backendService: BackendService) { }
   title = 'angular-darts';
 
-  playerScores = {
-    Scores: [301, 301]
+  playerScores!: ScoreboardResponse;
+  backendError!: boolean;
+
+  ngOnInit() {
+    this.backendService.currentGameState().subscribe(response => {
+      this.playerScores = response;
+      this.backendError = false;
+    }, error => {
+      this.backendError = true
+    });
   }
 
   throwDart(score: number) {
     this.backendService.throwDart(score).subscribe(response => {
       this.playerScores = response;
-      console.log(response.Scores)
     });
   }
 

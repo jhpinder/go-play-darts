@@ -1,4 +1,4 @@
-<div>
+<div *ngIf="playerScores && !backendError">
 
   <tr>
     <td>
@@ -24,4 +24,9 @@
   </button>
 
 
+</div>
+<div *ngIf="backendError">
+  <h2>
+    Backend service not reachable, please try again
+  </h2>
 </div>
