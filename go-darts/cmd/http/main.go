@@ -19,11 +19,11 @@ import (
 )
 
 var (
-	currentGame   countdownGame
-	numPlayers    = 2
-	startingScore = 301
-	coll          *mongo.Collection
-	ctx           = context.Background()
+	deprecatedcurrentGame countdownGame
+	numPlayers            = 2
+	startingScore         = 301
+	coll                  *mongo.Collection
+	ctx                   = context.Background()
 )
 
 type countdownGame struct {
@@ -32,9 +32,14 @@ type countdownGame struct {
 	GameID      int   `bson:"gameID"`
 }
 
+type throwDartRequest struct {
+	PlayerName string
+	Score      int
+}
+
 func init() {
 	log.SetFormatter(&log.JSONFormatter{})
-	log.SetLevel(log.InfoLevel)
+	log.SetLevel(log.DebugLevel)
 	log.SetOutput(os.Stdout)
 	log.SetReportCaller(true)
 }
@@ -47,7 +52,7 @@ func init() {
 func main() {
 	log.Info("Starting HTTP server")
 
-	getGameStatusFromDB(currentGame.GameID)
+	getGameStatusFromDB(deprecatedcurrentGame.GameID)
 
 	runHTTPServer()
 }
@@ -62,14 +67,15 @@ func initMongo() {
 
 	coll = mongoClient.Database("mongo-darts").Collection("games")
 
-	getGameStatusFromDB(currentGame.GameID)
+	getGameStatusFromDB(deprecatedcurrentGame.GameID)
 }
 
 func runHTTPServer() {
 	router := mux.NewRouter()
-	router.HandleFunc("/", gameStatus).Methods("GET")
-	router.HandleFunc("/restart", restartGame).Methods("GET")
-	router.HandleFunc("/{score}", scoreTurn).Methods("GET")
+	router.HandleFunc("/game/new", newGame).Methods("POST")
+	router.HandleFunc("/game/latest", getLatestGame).Methods("GET")
+	router.HandleFunc("/game/{gameID}", gameStatus).Methods("GET")
+	router.HandleFunc("/game/{gameID}", scoreTurn).Methods("POST") ///TODO
 
 	c := cors.New(cors.Options{
 		AllowedOrigins:   []string{"http://192.168.50.244:4200"},
@@ -87,16 +93,15 @@ func runHTTPServer() {
 	}
 }
 
-func getGameStatusFromDB(gameID int) {
-	var game countdownGame
+func getGameStatusFromDB(gameID int) (game countdownGame) {
 	err := coll.FindOne(ctx, bson.D{{Key: "gameID", Value: gameID}}).Decode(&game)
 	if err != nil {
-		log.Fatal(err)
+		log.Debug("Could not find game in DB")
 	}
-	currentGame = game
+	return
 }
 
-func updateGameStatusToDB() {
+func updateGameStatusToDB(currentGame countdownGame) {
 	filter := bson.D{{Key: "gameID", Value: currentGame.GameID}}
 	update := bson.D{{Key: "$set", Value: currentGame}}
 	_, err := coll.UpdateOne(ctx, filter, update)
@@ -105,20 +110,47 @@ func updateGameStatusToDB() {
 	}
 }
 
-func scoreTurn(w http.ResponseWriter, r *http.Request) {
-	getGameStatusFromDB(currentGame.GameID)
+func getNextGameID() int {
+	filter := bson.D{}
+	opts := options.Find().SetSort(bson.D{{Key: "gameID", Value: -1}})
+	cursor, err := coll.Find(context.TODO(), filter, opts)
+	if err != nil {
+		log.Fatal(err)
+	}
 
+	var results []countdownGame
+	if err = cursor.All(context.TODO(), &results); err != nil {
+		log.Fatal(err)
+	}
+	return results[0].GameID + 1
+}
+
+func scoreTurn(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	w.WriteHeader(http.StatusOK)
 	log.Info(r)
 	log.Info(vars)
 
-	intScore, err := strconv.Atoi(vars["score"])
+	gameID, err := strconv.Atoi(vars["gameID"])
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	currentGame.Scores[currentGame.CurrentTurn] -= intScore
+	incomingRequest := throwDartRequest{}
+	err = json.NewDecoder(r.Body).Decode(&incomingRequest)
+	if err != nil {
+		log.Fatal()
+	}
+
+	currentGame := getGameStatusFromDB(gameID)
+
+	currentGame.Scores[currentGame.CurrentTurn] -= incomingRequest.Score
+
+	currentGame.CurrentTurn++
+	if currentGame.CurrentTurn >= len(currentGame.Scores) {
+		currentGame.CurrentTurn = 0
+	}
+	updateGameStatusToDB(currentGame)
 
 	jsonOut, err := json.Marshal(currentGame)
 	if err != nil {
@@ -129,29 +161,58 @@ func scoreTurn(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if currentGame.CurrentTurn+1 == numPlayers {
-		currentGame.CurrentTurn = 0
-	} else {
-		currentGame.CurrentTurn++
-	}
-	updateGameStatusToDB()
 }
 
 func initializeGame() {
-	currentGame = countdownGame{
+	deprecatedcurrentGame = countdownGame{
 		Scores:      make([]int, numPlayers),
 		CurrentTurn: 0,
 		GameID:      1000,
 	}
 }
 
-func restartGame(w http.ResponseWriter, _ *http.Request) {
+func newGame(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
-	currentGame.CurrentTurn = 0
-	for i := range currentGame.Scores {
-		currentGame.Scores[i] = startingScore
+
+	doc := countdownGame{
+		Scores:      make([]int, numPlayers),
+		CurrentTurn: 0,
+		GameID:      getNextGameID(),
 	}
 
+	for i := range doc.Scores {
+		doc.Scores[i] = startingScore
+	}
+
+	_, err := coll.InsertOne(ctx, doc)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	jsonOut, err := json.Marshal(doc)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	_, err = fmt.Fprintln(w, string(jsonOut))
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func gameStatus(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	log.Debug(r)
+	log.Debugf("%+v", vars)
+
+	gameID, err := strconv.Atoi(vars["gameID"])
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	currentGame := getGameStatusFromDB(gameID)
+
+	w.WriteHeader(http.StatusOK)
 	jsonOut, err := json.Marshal(currentGame)
 	if err != nil {
 		log.Fatal(err)
@@ -161,10 +222,15 @@ func restartGame(w http.ResponseWriter, _ *http.Request) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	updateGameStatusToDB()
 }
 
-func gameStatus(w http.ResponseWriter, _ *http.Request) {
+func getLatestGame(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	log.Debug(r)
+	log.Debugf("%+v", vars)
+
+	currentGame := getGameStatusFromDB(getNextGameID() - 1)
+
 	w.WriteHeader(http.StatusOK)
 	jsonOut, err := json.Marshal(currentGame)
 	if err != nil {
