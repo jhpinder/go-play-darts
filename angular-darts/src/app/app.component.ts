@@ -15,18 +15,18 @@ export class AppComponent {
   gameStatus!: GameStatusResponse;
 
   ngOnInit() {
-    this.backendService.currentGameState().subscribe(response => {
+    this.backendService.getLatestGame().subscribe(response => {
       this.gameStatus = response;
     });
   }
 
   throwDart(score: number) {
-    this.backendService.throwDart(score).subscribe(response => {
+    this.backendService.throwDart(score, this.gameStatus.GameID, "Bob").subscribe(response => {
       this.gameStatus = response;
     });
   }
 
-  restartGame() {
+  newGame() {
     this.backendService.newGame().subscribe(response => {
       this.gameStatus = response;
     });
