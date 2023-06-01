@@ -1,6 +1,6 @@
 import { Component } from '@angular/core';
 import { BackendService } from './backend.service';
-import { ScoreboardResponse } from './scoreboard-response.Model';
+import { GameStatusResponse } from './game-status-response.Model';
 
 @Component({
   selector: 'app-root',
@@ -12,27 +12,23 @@ export class AppComponent {
   constructor(private backendService: BackendService) { }
   title = 'angular-darts';
 
-  playerScores!: ScoreboardResponse;
-  backendError!: boolean;
+  gameStatus!: GameStatusResponse;
 
   ngOnInit() {
-    this.backendService.currentGameState().subscribe(response => {
-      this.playerScores = response;
-      this.backendError = false;
-    }, error => {
-      this.backendError = true
+    this.backendService.getLatestGame().subscribe(response => {
+      this.gameStatus = response;
     });
   }
 
   throwDart(score: number) {
-    this.backendService.throwDart(score).subscribe(response => {
-      this.playerScores = response;
+    this.backendService.throwDart(score, this.gameStatus.GameID, "Bob").subscribe(response => {
+      this.gameStatus = response;
     });
   }
 
   newGame() {
     this.backendService.newGame().subscribe(response => {
-      this.playerScores = response;
+      this.gameStatus = response;
     });
   }
 }

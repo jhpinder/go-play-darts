@@ -1,5 +1,5 @@
-<div *ngIf="playerScores && !backendError">
-
+<div *ngIf="gameStatus">
+  <p>Game ID: {{gameStatus.GameID}}</p>
   <tr>
     <td>
       <button (click)="throwDart(1)">
@@ -12,21 +12,13 @@
   </tr>
   <tr>
     <td>
-      <p>Player 1: {{playerScores.Scores[0]}}</p>
-      <p>Player 2: {{playerScores.Scores[1]}}</p>
+      <p>Player 1: {{gameStatus.Scores[0]}}</p>
+      <p>Player 2: {{gameStatus.Scores[1]}}</p>
 
     </td>
   </tr>
 
-
   <button (click)="newGame()">
     New game
   </button>
-
-
-</div>
-<div *ngIf="backendError">
-  <h2>
-    Backend service not reachable, please try again
-  </h2>
 </div>
