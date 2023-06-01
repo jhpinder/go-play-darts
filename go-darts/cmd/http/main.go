@@ -26,10 +26,6 @@ var (
 	ctx           = context.Background()
 )
 
-type playerScores struct {
-	Scores []int
-}
-
 type countdownGame struct {
 	Scores      []int `bson:"scores"`
 	CurrentTurn int   `bson:"currentTurn"`
@@ -124,9 +120,7 @@ func scoreTurn(w http.ResponseWriter, r *http.Request) {
 
 	currentGame.Scores[currentGame.CurrentTurn] -= intScore
 
-	jsonOut, err := json.Marshal(playerScores{
-		Scores: currentGame.Scores,
-	})
+	jsonOut, err := json.Marshal(currentGame)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -158,9 +152,7 @@ func restartGame(w http.ResponseWriter, _ *http.Request) {
 		currentGame.Scores[i] = startingScore
 	}
 
-	jsonOut, err := json.Marshal(playerScores{
-		Scores: currentGame.Scores,
-	})
+	jsonOut, err := json.Marshal(currentGame)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -174,9 +166,7 @@ func restartGame(w http.ResponseWriter, _ *http.Request) {
 
 func gameStatus(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
-	jsonOut, err := json.Marshal(playerScores{
-		Scores: currentGame.Scores,
-	})
+	jsonOut, err := json.Marshal(currentGame)
 	if err != nil {
 		log.Fatal(err)
 	}
