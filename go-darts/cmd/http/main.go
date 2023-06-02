@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"strconv"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/rs/cors"
 	log "github.com/sirupsen/logrus"
@@ -19,22 +19,50 @@ import (
 )
 
 var (
-	deprecatedcurrentGame countdownGame
-	numPlayers            = 2
-	startingScore         = 301
-	coll                  *mongo.Collection
-	ctx                   = context.Background()
+	startingScore = 301
+	gameColl      *mongo.Collection
+	playerColl    *mongo.Collection
+	ctx           = context.Background()
 )
 
-type countdownGame struct {
-	Scores      []int `bson:"scores"`
-	CurrentTurn int   `bson:"currentTurn"`
-	GameID      int   `bson:"gameID"`
+func dartBoardScoreMapping(shot int) int {
+	internalMap := [83]int{
+		0,
+		20, 60, 20, 40,
+		1, 3, 1, 2,
+		18, 54, 18, 36,
+		4, 12, 4, 8,
+		13, 39, 13, 26,
+		6, 18, 6, 12,
+		10, 30, 10, 20,
+		15, 45, 15, 30,
+		2, 6, 2, 4,
+		17, 51, 17, 34,
+		3, 9, 3, 6,
+		19, 57, 19, 38,
+		7, 21, 7, 14,
+		16, 48, 16, 32,
+		8, 24, 8, 16,
+		11, 33, 11, 22,
+		14, 42, 14, 28,
+		9, 27, 9, 18,
+		12, 36, 12, 24,
+		5, 15, 5, 10,
+		50, 25,
+	}
+	return internalMap[shot]
 }
 
-type throwDartRequest struct {
-	PlayerName string
-	Score      int
+type countdownGame struct {
+	Scores  map[string]int   `bson:"scores"`
+	GameID  string           `bson:"gameID"`
+	Shots   map[string][]int `bson:"shots"`
+	Players []string         `bson:"players"`
+}
+
+type player struct {
+	PlayerID   string `bson:"playerID"`
+	PlayerName string `bson:"playerName"`
 }
 
 func init() {
@@ -45,14 +73,11 @@ func init() {
 }
 
 func init() {
-	initializeGame()
 	initMongo()
 }
 
 func main() {
 	log.Info("Starting HTTP server")
-
-	getGameStatusFromDB(deprecatedcurrentGame.GameID)
 
 	runHTTPServer()
 }
@@ -65,17 +90,19 @@ func initMongo() {
 		log.Fatal(err)
 	}
 
-	coll = mongoClient.Database("mongo-darts").Collection("games")
-
-	getGameStatusFromDB(deprecatedcurrentGame.GameID)
+	gameColl = mongoClient.Database("darts").Collection("game")
+	playerColl = mongoClient.Database("darts").Collection("player")
 }
 
 func runHTTPServer() {
 	router := mux.NewRouter()
 	router.HandleFunc("/game/new", newGame).Methods("POST")
-	router.HandleFunc("/game/latest", getLatestGame).Methods("GET")
 	router.HandleFunc("/game/{gameID}", gameStatus).Methods("GET")
-	router.HandleFunc("/game/{gameID}", scoreTurn).Methods("POST") ///TODO
+	router.HandleFunc("/game/{gameID}", scoreTurn).Methods("POST")
+
+	router.HandleFunc("/player/new", newPlayer).Methods("POST")
+	router.HandleFunc("/player/{playerID}", getPlayerName).Methods("GET")
+	router.HandleFunc("/player/{playerID}", updatePlayerName).Methods("POST")
 
 	c := cors.New(cors.Options{
 		AllowedOrigins:   []string{"http://192.168.50.244:4200"},
@@ -93,8 +120,8 @@ func runHTTPServer() {
 	}
 }
 
-func getGameStatusFromDB(gameID int) (game countdownGame) {
-	err := coll.FindOne(ctx, bson.D{{Key: "gameID", Value: gameID}}).Decode(&game)
+func getGameStatusFromDB(gameID string) (game countdownGame) {
+	err := gameColl.FindOne(ctx, bson.D{{Key: "gameID", Value: gameID}}).Decode(&game)
 	if err != nil {
 		log.Debug("Could not find game in DB")
 	}
@@ -104,25 +131,10 @@ func getGameStatusFromDB(gameID int) (game countdownGame) {
 func updateGameStatusToDB(currentGame countdownGame) {
 	filter := bson.D{{Key: "gameID", Value: currentGame.GameID}}
 	update := bson.D{{Key: "$set", Value: currentGame}}
-	_, err := coll.UpdateOne(ctx, filter, update)
+	_, err := gameColl.UpdateOne(ctx, filter, update)
 	if err != nil {
 		log.Fatal(err)
 	}
-}
-
-func getNextGameID() int {
-	filter := bson.D{}
-	opts := options.Find().SetSort(bson.D{{Key: "gameID", Value: -1}})
-	cursor, err := coll.Find(context.TODO(), filter, opts)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	var results []countdownGame
-	if err = cursor.All(context.TODO(), &results); err != nil {
-		log.Fatal(err)
-	}
-	return results[0].GameID + 1
 }
 
 func scoreTurn(w http.ResponseWriter, r *http.Request) {
@@ -131,25 +143,33 @@ func scoreTurn(w http.ResponseWriter, r *http.Request) {
 	log.Info(r)
 	log.Info(vars)
 
-	gameID, err := strconv.Atoi(vars["gameID"])
-	if err != nil {
-		log.Fatal(err)
-	}
+	gameID := vars["gameID"]
 
-	incomingRequest := throwDartRequest{}
-	err = json.NewDecoder(r.Body).Decode(&incomingRequest)
+	shot := int(0)
+	err := json.NewDecoder(r.Body).Decode(&shot)
 	if err != nil {
 		log.Fatal()
 	}
 
 	currentGame := getGameStatusFromDB(gameID)
+	player := currentGame.Players[0]
+	shots := currentGame.Shots[player]
 
-	currentGame.Scores[currentGame.CurrentTurn] -= incomingRequest.Score
+	// add a shot
+	shots = append(shots, shot)
+	currentGame.Shots[player] = shots
 
-	currentGame.CurrentTurn++
-	if currentGame.CurrentTurn >= len(currentGame.Scores) {
-		currentGame.CurrentTurn = 0
+	// update score
+	currentGame.Scores[player] -= dartBoardScoreMapping(shot)
+
+	// if number of shots by current player mod 3 is 0, next player
+	if len(shots)%3 == 0 {
+		// move the first player to the back of the queue
+		players := currentGame.Players[1:]
+		players = append(players, player)
+		currentGame.Players = players
 	}
+
 	updateGameStatusToDB(currentGame)
 
 	jsonOut, err := json.Marshal(currentGame)
@@ -163,28 +183,30 @@ func scoreTurn(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func initializeGame() {
-	deprecatedcurrentGame = countdownGame{
-		Scores:      make([]int, numPlayers),
-		CurrentTurn: 0,
-		GameID:      1000,
-	}
-}
-
-func newGame(w http.ResponseWriter, _ *http.Request) {
+func newGame(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 
+	requestBody := []string{}
+	err := json.NewDecoder(r.Body).Decode(&requestBody)
+	if err != nil {
+		log.Fatal()
+	}
+
 	doc := countdownGame{
-		Scores:      make([]int, numPlayers),
-		CurrentTurn: 0,
-		GameID:      getNextGameID(),
+		Scores:  map[string]int{},
+		GameID:  uuid.NewString(),
+		Shots:   map[string][]int{},
+		Players: []string{},
 	}
 
-	for i := range doc.Scores {
-		doc.Scores[i] = startingScore
+	for i := range requestBody {
+		doc.Scores[requestBody[i]] = startingScore
+		doc.Shots[requestBody[i]] = []int{}
 	}
 
-	_, err := coll.InsertOne(ctx, doc)
+	doc.Players = requestBody
+
+	_, err = gameColl.InsertOne(ctx, doc)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -202,13 +224,9 @@ func newGame(w http.ResponseWriter, _ *http.Request) {
 
 func gameStatus(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
-	log.Debug(r)
 	log.Debugf("%+v", vars)
 
-	gameID, err := strconv.Atoi(vars["gameID"])
-	if err != nil {
-		log.Fatal(err)
-	}
+	gameID := vars["gameID"]
 
 	currentGame := getGameStatusFromDB(gameID)
 
@@ -224,20 +242,110 @@ func gameStatus(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func getLatestGame(w http.ResponseWriter, r *http.Request) {
+func newPlayer(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	log.Debug(r)
 	log.Debugf("%+v", vars)
 
-	currentGame := getGameStatusFromDB(getNextGameID() - 1)
+	incomingRequest := player{}
+	err := json.NewDecoder(r.Body).Decode(&incomingRequest)
+	if err != nil {
+		log.Fatal()
+	}
+
+	playerToAdd := player{
+		PlayerID:   uuid.NewString(),
+		PlayerName: incomingRequest.PlayerName,
+	}
+
+	_, err = playerColl.InsertOne(ctx, playerToAdd)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	w.WriteHeader(http.StatusOK)
-	jsonOut, err := json.Marshal(currentGame)
+
+	jsonOut, err := json.Marshal(playerToAdd)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	_, err = fmt.Fprintln(w, string(jsonOut))
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func getPlayerName(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	log.Debug(r)
+	log.Debugf("%+v", vars)
+
+	playerID, ok := vars["playerID"]
+	if !ok {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	response := player{}
+
+	err := playerColl.FindOne(ctx, bson.D{{Key: "playerID", Value: playerID}}).Decode(&response)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	w.WriteHeader(http.StatusOK)
+
+	jsonOut, err := json.Marshal(response)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	_, err = fmt.Fprintln(w, string(jsonOut))
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func updatePlayerName(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	log.Debug(r)
+	log.Debugf("%+v", vars)
+
+	playerID, ok := vars["playerID"]
+	if !ok {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	incomingRequest := player{}
+	err := json.NewDecoder(r.Body).Decode(&incomingRequest)
+	if err != nil {
+		log.Fatal()
+	}
+
+	filter := bson.D{{Key: "playerID", Value: playerID}}
+	update := bson.D{{
+		Key: "$set",
+		Value: bson.D{{
+			Key:   "playerName",
+			Value: incomingRequest.PlayerName,
+		}},
+	}}
+
+	response, err := playerColl.UpdateOne(ctx, filter, update)
+	if err != nil || response.MatchedCount != 1 {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, err = fmt.Fprintln(w, "Unable to update player name")
+		if err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+
+	_, err = fmt.Fprintln(w, "Updated player name")
 	if err != nil {
 		log.Fatal(err)
 	}
