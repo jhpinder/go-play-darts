@@ -54,10 +54,11 @@ func dartBoardScoreMapping(shot int) int {
 }
 
 type countdownGame struct {
-	Scores  map[string]int   `bson:"scores"`
-	GameID  string           `bson:"gameID"`
-	Shots   map[string][]int `bson:"shots"`
-	Players []string         `bson:"players"`
+	Scores             map[string]int   `bson:"scores"`
+	GameID             string           `bson:"gameID"`
+	Shots              map[string][]int `bson:"shots"`
+	OrderedPlayers     []string         `bson:"orderedPlayers"`
+	CurrentPlayerIndex int              `bson:"currentPlayerIndex"`
 }
 
 type player struct {
@@ -98,7 +99,7 @@ func runHTTPServer() {
 	router := mux.NewRouter()
 	router.HandleFunc("/game/new", newGame).Methods("POST")
 	router.HandleFunc("/game/{gameID}", gameStatus).Methods("GET")
-	router.HandleFunc("/game/{gameID}", scoreTurn).Methods("POST")
+	router.HandleFunc("/game/{gameID}", scoreThrow).Methods("POST")
 
 	router.HandleFunc("/player/new", newPlayer).Methods("POST")
 	router.HandleFunc("/player/{playerID}", getPlayerName).Methods("GET")
@@ -137,7 +138,7 @@ func updateGameStatusToDB(currentGame countdownGame) {
 	}
 }
 
-func scoreTurn(w http.ResponseWriter, r *http.Request) {
+func scoreThrow(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	w.WriteHeader(http.StatusOK)
 	log.Info(r)
@@ -152,7 +153,7 @@ func scoreTurn(w http.ResponseWriter, r *http.Request) {
 	}
 
 	currentGame := getGameStatusFromDB(gameID)
-	player := currentGame.Players[0]
+	player := currentGame.OrderedPlayers[currentGame.CurrentPlayerIndex]
 	shots := currentGame.Shots[player]
 
 	// add a shot
@@ -164,10 +165,11 @@ func scoreTurn(w http.ResponseWriter, r *http.Request) {
 
 	// if number of shots by current player mod 3 is 0, next player
 	if len(shots)%3 == 0 {
-		// move the first player to the back of the queue
-		players := currentGame.Players[1:]
-		players = append(players, player)
-		currentGame.Players = players
+		// increment the index of the current player
+		currentGame.CurrentPlayerIndex++
+		if currentGame.CurrentPlayerIndex >= len(currentGame.OrderedPlayers) {
+			currentGame.CurrentPlayerIndex = 0
+		}
 	}
 
 	updateGameStatusToDB(currentGame)
@@ -193,10 +195,11 @@ func newGame(w http.ResponseWriter, r *http.Request) {
 	}
 
 	doc := countdownGame{
-		Scores:  map[string]int{},
-		GameID:  uuid.NewString(),
-		Shots:   map[string][]int{},
-		Players: []string{},
+		Scores:             map[string]int{},
+		GameID:             uuid.NewString(),
+		Shots:              map[string][]int{},
+		OrderedPlayers:     []string{},
+		CurrentPlayerIndex: 0,
 	}
 
 	for i := range requestBody {
@@ -204,7 +207,8 @@ func newGame(w http.ResponseWriter, r *http.Request) {
 		doc.Shots[requestBody[i]] = []int{}
 	}
 
-	doc.Players = requestBody
+	doc.OrderedPlayers = requestBody
+	log.Debug(requestBody)
 
 	_, err = gameColl.InsertOne(ctx, doc)
 	if err != nil {

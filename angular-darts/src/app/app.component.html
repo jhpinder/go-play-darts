@@ -1,5 +1,32 @@
-<div *ngIf="gameStatus">
+<div *ngIf="showNewGame" class="container m-3">
+  <h3>Add players to the game:</h3>
+  <div class="form-group">
+    <form class="col p-3" (ngSubmit)="addPlayer()">
+      <div class="row">
+        <div class="col-6">
+          <input class="col-5" id="playerID" placeholder="Player ID" name="player" [(ngModel)]="currentPlayerID">
+          <button type="submit" class="btn btn-secondary mx-2">Add</button>
+        </div>
+      </div>
+    </form>
+  </div>
+
+
+  <ul class="list-group col-5 p-3">
+    <li class="list-group-item" *ngFor="let playerID of playerList; let i = index">
+      {{playerID}}
+    </li>
+  </ul>
+
+  <button class="btn btn-primary" (click)="newGame()">
+    Start new game
+  </button>
+</div>
+
+
+<div class="container" *ngIf="!showNewGame">
   <p>Game ID: {{gameStatus.GameID}}</p>
+  <p>Current turn: {{gameStatus.OrderedPlayers[gameStatus.CurrentPlayerIndex]}}</p>
   <tr>
     <td>
       <button (click)="throwDart(1)">
@@ -10,15 +37,14 @@
       </button>
     </td>
   </tr>
-  <tr>
-    <td>
-      <p>Player 1: {{gameStatus.Scores[0]}}</p>
-      <p>Player 2: {{gameStatus.Scores[1]}}</p>
 
-    </td>
-  </tr>
+  <ul class="list-group col-5 p-3">
+    <li class="list-group-item" *ngFor="let playerName of gameStatus.OrderedPlayers; let i = index">
+      {{playerName}}: {{gameStatus.Scores.get(playerName)}}
+    </li>
+  </ul>
 
-  <button (click)="newGame()">
-    New game
+  <button class="btn btn-warning" (click)="endGame()">
+    Start new game
   </button>
 </div>
