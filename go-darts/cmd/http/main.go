@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -80,6 +81,9 @@ func init() {
 
 func main() {
 	log.Info("go-darts: started")
+
+	wg := sync.WaitGroup{}
+
 	mongoURI := "mongodb://mongoadmin:secret@localhost:27017/admin"
 	opts := options.Client().ApplyURI(mongoURI)
 	mongoClient, err := mongo.Connect(context.Background(), opts)
@@ -87,13 +91,19 @@ func main() {
 		log.Fatal(err)
 	}
 	dartService := newDartService(mongoClient)
-	dartService.runHTTPServer()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		dartService.runHTTPServer("A", ":9090")
+	}()
+	wg.Wait()
+
 }
 
 func newDartService(client *mongo.Client) (service *mongoDartService) {
 	service = &mongoDartService{}
 	service.gameColl = client.Database("darts").Collection("game")
-	service.playerColl = client.Database("darts").Collection("player") ///TODO handle errors
+	service.playerColl = client.Database("darts").Collection("player") // TODO handle errors
 	return service
 }
 
@@ -121,8 +131,8 @@ func (ds *mongoDartService) createNewGameInDB(game countdownGame) {
 	}
 }
 
-func (ds *mongoDartService) runHTTPServer() {
-	log.Info("Attempting to start HTTP server")
+func (ds *mongoDartService) runHTTPServer(name, port string) {
+	log.Info("Attempting to start HTTP server " + name)
 	router := mux.NewRouter()
 	router.HandleFunc("/game/new", ds.httpNewGame).Methods("POST")
 	router.HandleFunc("/game/{gameID}", ds.httpGameStatus).Methods("GET")
@@ -139,7 +149,7 @@ func (ds *mongoDartService) runHTTPServer() {
 
 	server := http.Server{
 		Handler:     c.Handler(router),
-		Addr:        ":9090",
+		Addr:        port,
 		ReadTimeout: time.Minute,
 	}
 	err := server.ListenAndServe() // should block
