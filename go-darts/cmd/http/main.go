@@ -19,10 +19,9 @@ import (
 )
 
 var (
-	startingScore = 301
-	gameColl      *mongo.Collection
-	playerColl    *mongo.Collection
-	ctx           = context.Background()
+	startingScore                  = 301
+	dartService   MongoDartService = &mongoDartService{}
+	ctx                            = context.Background()
 )
 
 func dartBoardScoreMapping(shot int) int {
@@ -66,6 +65,18 @@ type player struct {
 	PlayerName string `bson:"playerName"`
 }
 
+type mongoDartService struct {
+	gameColl   *mongo.Collection
+	playerColl *mongo.Collection
+}
+
+// MongoDartService Interface for mongoDB service
+type MongoDartService interface {
+	getGameStatus(gameID string) countdownGame
+	createNewGameInDB(game countdownGame)
+	updateGameStatus(game countdownGame)
+}
+
 func init() {
 	log.SetFormatter(&log.JSONFormatter{})
 	log.SetLevel(log.DebugLevel)
@@ -91,8 +102,38 @@ func initMongo() {
 		log.Fatal(err)
 	}
 
-	gameColl = mongoClient.Database("darts").Collection("game")
-	playerColl = mongoClient.Database("darts").Collection("player")
+	dartService = newDartService(mongoClient)
+}
+
+func newDartService(client *mongo.Client) (service *mongoDartService) {
+	service = &mongoDartService{}
+	service.gameColl = client.Database("darts").Collection("game")
+	service.playerColl = client.Database("darts").Collection("player")
+	return service
+}
+
+func (ds *mongoDartService) getGameStatus(gameID string) (game countdownGame) {
+	err := ds.gameColl.FindOne(ctx, bson.D{{Key: "gameID", Value: gameID}}).Decode(&game)
+	if err != nil {
+		log.Debug("Could not find game in DB")
+	}
+	return
+}
+
+func (ds *mongoDartService) updateGameStatus(currentGame countdownGame) {
+	filter := bson.D{{Key: "gameID", Value: currentGame.GameID}}
+	update := bson.D{{Key: "$set", Value: currentGame}}
+	_, err := ds.gameColl.UpdateOne(ctx, filter, update)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func (ds *mongoDartService) createNewGameInDB(game countdownGame) {
+	_, err := ds.gameColl.InsertOne(ctx, game)
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 func runHTTPServer() {
@@ -102,8 +143,8 @@ func runHTTPServer() {
 	router.HandleFunc("/game/{gameID}", scoreThrow).Methods("POST")
 
 	router.HandleFunc("/player/new", newPlayer).Methods("POST")
-	router.HandleFunc("/player/{playerID}", getPlayerName).Methods("GET")
-	router.HandleFunc("/player/{playerID}", updatePlayerName).Methods("POST")
+	// router.HandleFunc("/player/{playerID}", getPlayerName).Methods("GET")
+	// router.HandleFunc("/player/{playerID}", updatePlayerName).Methods("POST")
 
 	c := cors.New(cors.Options{
 		AllowedOrigins:   []string{"http://192.168.50.244:4200"},
@@ -116,23 +157,6 @@ func runHTTPServer() {
 		ReadTimeout: time.Minute,
 	}
 	err := server.ListenAndServe()
-	if err != nil {
-		log.Fatal(err)
-	}
-}
-
-func getGameStatusFromDB(gameID string) (game countdownGame) {
-	err := gameColl.FindOne(ctx, bson.D{{Key: "gameID", Value: gameID}}).Decode(&game)
-	if err != nil {
-		log.Debug("Could not find game in DB")
-	}
-	return
-}
-
-func updateGameStatusToDB(currentGame countdownGame) {
-	filter := bson.D{{Key: "gameID", Value: currentGame.GameID}}
-	update := bson.D{{Key: "$set", Value: currentGame}}
-	_, err := gameColl.UpdateOne(ctx, filter, update)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -152,7 +176,7 @@ func scoreThrow(w http.ResponseWriter, r *http.Request) {
 		log.Fatal()
 	}
 
-	currentGame := getGameStatusFromDB(gameID)
+	currentGame := dartService.getGameStatus(gameID)
 	player := currentGame.OrderedPlayers[currentGame.CurrentPlayerIndex]
 	shots := currentGame.Shots[player]
 
@@ -172,7 +196,7 @@ func scoreThrow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	updateGameStatusToDB(currentGame)
+	dartService.updateGameStatus(currentGame)
 
 	jsonOut, err := json.Marshal(currentGame)
 	if err != nil {
@@ -210,10 +234,7 @@ func newGame(w http.ResponseWriter, r *http.Request) {
 	doc.OrderedPlayers = requestBody
 	log.Debug(requestBody)
 
-	_, err = gameColl.InsertOne(ctx, doc)
-	if err != nil {
-		log.Fatal(err)
-	}
+	dartService.createNewGameInDB(doc)
 
 	jsonOut, err := json.Marshal(doc)
 	if err != nil {
@@ -232,7 +253,7 @@ func gameStatus(w http.ResponseWriter, r *http.Request) {
 
 	gameID := vars["gameID"]
 
-	currentGame := getGameStatusFromDB(gameID)
+	currentGame := dartService.getGameStatus(gameID)
 
 	w.WriteHeader(http.StatusOK)
 	jsonOut, err := json.Marshal(currentGame)
@@ -262,7 +283,7 @@ func newPlayer(w http.ResponseWriter, r *http.Request) {
 		PlayerName: incomingRequest.PlayerName,
 	}
 
-	_, err = playerColl.InsertOne(ctx, playerToAdd)
+	//_, err = dartService.getPlayerColl().InsertOne(ctx, playerToAdd)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -280,77 +301,81 @@ func newPlayer(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func getPlayerName(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	log.Debug(r)
-	log.Debugf("%+v", vars)
+// func getPlayerName(w http.ResponseWriter, r *http.Request) {
+// 	vars := mux.Vars(r)
+// 	log.Debug(r)
+// 	log.Debugf("%+v", vars)
 
-	playerID, ok := vars["playerID"]
-	if !ok {
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
+// 	playerID, ok := vars["playerID"]
+// 	if !ok {
+// 		w.WriteHeader(http.StatusInternalServerError)
+// 		return
+// 	}
 
-	response := player{}
+// 	response := player{}
 
-	err := playerColl.FindOne(ctx, bson.D{{Key: "playerID", Value: playerID}}).Decode(&response)
-	if err != nil {
-		log.Fatal(err)
-	}
+// 	err := dartService.playerColl.FindOne(ctx, bson.D{{Key: "playerID", Value: playerID}}).Decode(&response)
+// 	if err != nil {
+// 		log.Fatal(err)
+// 	}
 
-	w.WriteHeader(http.StatusOK)
+// 	w.WriteHeader(http.StatusOK)
 
-	jsonOut, err := json.Marshal(response)
-	if err != nil {
-		log.Fatal(err)
-	}
+// 	jsonOut, err := json.Marshal(response)
+// 	if err != nil {
+// 		log.Fatal(err)
+// 	}
 
-	_, err = fmt.Fprintln(w, string(jsonOut))
-	if err != nil {
-		log.Fatal(err)
-	}
-}
+// 	_, err = fmt.Fprintln(w, string(jsonOut))
+// 	if err != nil {
+// 		log.Fatal(err)
+// 	}
+// }
 
-func updatePlayerName(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	log.Debug(r)
-	log.Debugf("%+v", vars)
+// func updatePlayerName(w http.ResponseWriter, r *http.Request) {
+// 	vars := mux.Vars(r)
+// 	log.Debug(r)
+// 	log.Debugf("%+v", vars)
 
-	playerID, ok := vars["playerID"]
-	if !ok {
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
+// 	playerID, ok := vars["playerID"]
+// 	if !ok {
+// 		w.WriteHeader(http.StatusInternalServerError)
+// 		return
+// 	}
 
-	incomingRequest := player{}
-	err := json.NewDecoder(r.Body).Decode(&incomingRequest)
-	if err != nil {
-		log.Fatal()
-	}
+// 	incomingRequest := player{}
+// 	err := json.NewDecoder(r.Body).Decode(&incomingRequest)
+// 	if err != nil {
+// 		log.Fatal()
+// 	}
 
-	filter := bson.D{{Key: "playerID", Value: playerID}}
-	update := bson.D{{
-		Key: "$set",
-		Value: bson.D{{
-			Key:   "playerName",
-			Value: incomingRequest.PlayerName,
-		}},
-	}}
+// 	filter := bson.D{{Key: "playerID", Value: playerID}}
+// 	update := bson.D{{
+// 		Key: "$set",
+// 		Value: bson.D{{
+// 			Key:   "playerName",
+// 			Value: incomingRequest.PlayerName,
+// 		}},
+// 	}}
 
-	response, err := playerColl.UpdateOne(ctx, filter, update)
-	if err != nil || response.MatchedCount != 1 {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, err = fmt.Fprintln(w, "Unable to update player name")
-		if err != nil {
-			log.Fatal(err)
-		}
-		return
-	}
+// 	response, err := dartService.playerColl.UpdateOne(ctx, filter, update)
+// 	if err != nil || response.MatchedCount != 1 {
+// 		w.WriteHeader(http.StatusInternalServerError)
+// 		_, err = fmt.Fprintln(w, "Unable to update player name")
+// 		if err != nil {
+// 			log.Fatal(err)
+// 		}
+// 		return
+// 	}
 
-	w.WriteHeader(http.StatusOK)
+// 	w.WriteHeader(http.StatusOK)
 
-	_, err = fmt.Fprintln(w, "Updated player name")
-	if err != nil {
-		log.Fatal(err)
-	}
-}
+// 	_, err = fmt.Fprintln(w, "Updated player name")
+// 	if err != nil {
+// 		log.Fatal(err)
+// 	}
+// }
+
+// func TestScoreThrow(t *testing.T) {
+
+// }
